@@ -1,0 +1,1399 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  Name: chaos-testing
+spec:
+  entrypoint: chaos-testing
+  onExit: exit-handler
+  synchronization:
+    mutex: 
+      name:  "{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}"
+  volumes:
+    - name: github-privatekey-vol
+      secret:
+        secretName: github-privatekey      
+  volumeClaimTemplates:
+    - metadata:
+        name: workdir
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: 500M
+        storageClassName: gp3
+  volumeClaimGC:
+    strategy: OnWorkflowCompletion            
+  podGC:
+    strategy: OnWorkflowCompletion
+  arguments:
+    parameters:
+      - name: startedAt
+        value: "5/24/2023, 11:24:04 AM"
+      - name: finishedAt
+        value: "5/24/2023, 11:35:38 AM"
+      - name: chaos-namespace #new chaos mesh parameterization
+        value: 'profile-micro'
+      - name: chaos-applabel #new chaos mesh parameterization
+        value: 'profile-micro'
+      - name: prometheus-pushgateway-uri
+        value: 'prometheus-pushgateway.prometheus.svc.cluster.local:9091'
+      - name: keptn-api-uri
+        value: 'api-gateway-nginx.keptn.svc.cluster.local'
+      - name: keptn-api-token
+        value: 'WwifqyRuRZbg16D6uzMmDXgtjIDfUyrSW09VqBKZbJfp3'
+      - name: keptn-stage-name
+        value: 'perftest'
+      - name: keptn-trigger-shkeptncontext
+        value: ''
+      - name: keptn-trigger-id
+        value: ''
+      - name: keptn-triggered
+        value: 'false'
+      - name: test-libfile
+        value: 'https://raw.githubusercontent.com/mcverse-org/pe-tools-reliability-micro-poc/full-locust/connected_services/prommodule.py'
+      - name: test-loadshapefile
+        value: ''                         
+      - name: team-name
+        value: ''
+        enum:
+          -   ''
+          -   'payments'
+          -   'testproj'
+      - name: test-name
+        value: ''
+        enum:
+          -   ''
+          -   'walletms-uk'
+          -   'testname1'
+      - name: env-name
+        value: ''
+      - name: market-name
+        value: ''
+      - name: locust-image
+        value: 'vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/locust:2.14.0'  
+      - name: locust-entry
+        value: '/test.py'
+      - name: git-repo
+        value: ''
+      - name: git-branch
+        value: 'master'
+      - name: test-api-url
+        value: ''
+        enum:
+          -   ''
+          -   'https://walletms-payments-uk-perf02.stage-perf2.us-east-1.stage.digitalecp.mcd.com/exp/v1/wallet'
+          -   'https://walletms-payments-us-perf02.stage-perf2.us-east-1.stage.digitalecp.mcd.com/exp/v1/wallet'
+          -   'https://walletms-payments-uk-perf02.stage-perf2.us-east-1.stage.digitalecp.mcd.com'
+          -   'http://fraudms-payments-uk-perf02.stage-perf2.us-east-1.stage.digitalecp.mcd.com'
+      - name: test-vus
+        value: 20
+      - name: test-workers
+        value: 2
+      - name: test-runtime
+        value: "30s"
+      - name: test-spawnrate
+        value: "20"   
+      - name: test-datafiles
+        value: |
+          [{"file-path": "", "file-name": ""}]  
+      - name: test-testfile
+        value: ''
+        enum:
+          -   ''
+      - name: test-slofile
+        value: ''
+        enum:
+          -   ''
+      - name: test-slifile
+        value: ''
+        enum:
+          -   ''
+      - name: chaos-git-repo
+        value: 'https://github.com/mcverse-org/pe-tools-chaos-reliability-testing.git'
+      - name: chaos-git-branch
+        value: 'master'
+      - name: chaos-file-path
+        value: '/game-day-scenarios/payments/chaos-templates/json/'
+      - name: chaos-test-chaosfiles
+        value: ''
+        valueFrom:
+          default: ""
+          enum: []  
+  templates:
+  - name: chaos-testing
+    steps:
+    - - name: GetGithubCreds
+        template: get-githubcreds
+    - - name: UpdateGithubSecret
+        template: update-github-secret
+        when: "\"{{workflow.parameters.git-repo}}\" != ''"  
+    - - name: GetRepo
+        template: get-repo
+        when: "\"{{workflow.parameters.git-repo}}\" != ''"
+    - - name: CreateKeptnService
+        template: create-keptn-service
+    - - name: ConfigureKeptnMonitoring
+        template: configure-keptn-service-monitoring         
+    - - name: GetSLOFileContent
+        template: get-slo-content      
+    - - name: UploadSLOToKeptn
+        template: upload-slo-to-keptn
+        arguments:
+          parameters:
+          - name: slo-base64
+            value: "{{steps.GetSLOFileContent.outputs.parameters.slo-base64}}"
+    - - name: GetSLIFileContent
+        template: get-sli-content 
+    - - name: UploadSLIToKeptn
+        template: upload-sli-to-keptn
+        arguments:
+          parameters:
+          - name: sli-base64
+            value: "{{steps.GetSLIFileContent.outputs.parameters.sli-base64}}"
+    - - name: GetDataFiles
+        template: get-datafiles
+        when: "\"{{workflow.parameters.git-repo}}\" == ''"
+        arguments:
+          parameters:
+            - name: file-path
+              value: "{{item.file-path}}"
+            - name: file-name
+              value: "{{item.file-name}}"
+        withParam: "{{workflow.parameters.test-datafiles}}"
+    - - name: GetLibFile
+        template: get-libfile
+    - - name: GetLoadShape
+        template: get-loadshape                 
+    - - name: GetTestFile
+        template: get-testfile
+        when: "\"{{workflow.parameters.git-repo}}\" == ''"
+    - - name: CreateLocustService  
+        template: create-locust-service
+    - - name: CreateIstioGateway
+        template: create-istio-gateway
+    - - name: CreateIstioVirtualService
+        template: create-istio-virtualservice        
+    - - name: SendStartedEventToKeptn
+        template: send-started-event-keptn
+        when: "{{workflow.parameters.keptn-triggered}} == true"
+        arguments:
+          parameters:
+          - name: testurl
+            value: "{{steps.CreateIstioVirtualService.outputs.parameters.locust-uri}}"  
+    # - - name: CreateLocustWorkers
+    #     template: create-locust-workers
+
+    # - - name: CreateLocustMaster
+    #     template: create-locust-master
+    #     arguments:
+    #       parameters:
+    #       - name: loadshape
+    #         value: "{{steps.GetLoadShape.outputs.parameters.loadshape}}"
+    #       - name: test-vus
+    #         value: "{{steps.GetLoadShape.outputs.parameters.test-vus}}"
+    #       - name: test-spawnrate
+    #         value: "{{steps.GetLoadShape.outputs.parameters.test-spawnrate}}"
+    #       - name: test-runtime
+    #         value: "{{steps.GetLoadShape.outputs.parameters.test-runtime}}"
+    - - name: GetChaosRepo
+        template: chaos-get-repo
+        when: "\"{{workflow.parameters.chaos-git-repo}}\" != ''"
+    - - name: CreateparallelTasks #chaos testing
+        template: parallelTasks
+    - - name: UploadReportS3
+        template: upload-report-s3        
+    - - name: DeleteLocustService
+        template: delete-object
+        arguments:
+          parameters:
+          - name: object-name
+            value: 'locust-master-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}'
+          - name: object-type
+            value: 'Service'
+          - name: api-version
+            value: 'v1'
+    - - name: DeleteIstioGateway
+        template: delete-object
+        when: "{{workflow.status}} != Succeeded"
+        arguments:
+          parameters:
+          - name: object-name
+            value: 'locust-gateway-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}'
+          - name: object-type
+            value: 'gateway'
+          - name: api-version
+            value: 'networking.istio.io/v1alpha3'
+    - - name: DeleteIstioVirtualService
+        template: delete-object
+        when: "{{workflow.status}} != Succeeded"
+        arguments:
+          parameters:
+          - name: object-name
+            value: 'locust-virtualservice-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}'
+          - name: object-type
+            value: 'virtualservice'
+          - name: api-version
+            value: 'networking.istio.io/v1alpha3'
+    - - name: TriggerKeptnEvaluation
+        template: trigger-keptn-evaluation
+        when: "{{workflow.parameters.keptn-triggered}} != true"
+        arguments:
+          parameters:
+          - name: start-time
+            value: '{{workflow.parameters.startedAt}}' 
+          - name: end-time
+            value: '{{workflow.parameters.finishedAt}}'                      
+    - - name: GetKeptnEvaluationResult
+        template: get-keptn-evaluation-result
+        when: "{{workflow.parameters.keptn-triggered}} != true"
+        arguments:
+          parameters:
+          - name: keptncontext
+            value: "{{=jsonpath(steps.TriggerKeptnEvaluation.outputs.result, '$.keptnContext')}}"
+    - - name: EvalWorkflowResult
+        template: extract-keptn-evaluation-result
+        when: "{{workflow.parameters.keptn-triggered}} != true"
+        arguments:
+          parameters:
+          - name: result
+            value: "{{=jsonpath(steps.GetKeptnEvaluationResult.outputs.result, '$.events[0].data.result')}}"
+    - - name: SendFinishedEventToKeptn
+        template: send-finished-event-keptn
+        when: "{{workflow.parameters.keptn-triggered}} == true"
+        arguments:
+          parameters:
+          - name: status
+            value: 'succeeded'
+          - name: result
+            value: 'pass'
+          - name: message
+            value: 'test workflow finished with no errors'
+          - name: start-time
+            value: '{{workflow.parameters.startedAt}}' 
+          - name: end-time
+            value: '{{workflow.parameters.finishedAt}}'
+
+  - name: parallelTasks
+    dag:
+        tasks:
+          - name: GetChaosFiles
+            template: get-chaos-files
+          - name: create-locust-workers
+            dependencies: [GetChaosFiles]
+            template: create-locust-workers
+
+          - name: create-locust-master
+            dependencies: [create-locust-workers]
+            template: create-locust-master
+            arguments:
+              parameters:
+              - name: loadshape
+                value: "{{workflow.parameters.test-loadshapefile}}"
+              - name: test-vus
+                value: "{{workflow.parameters.test-vus}}"
+              - name: test-spawnrate
+                value: "{{workflow.parameters.test-spawnrate}}"
+              - name: test-runtime
+                value: "{{workflow.parameters.test-runtime}}"
+          - name: SubmitAndSuspendChaosFiles
+            dependencies: [GetChaosFiles]
+            template: submit-and-suspend
+            arguments:
+              parameters:
+              - name: chaosfile
+                value: "{{item}}"
+            withParam: "{{tasks.GetChaosFiles.outputs.parameters.test-chaosfiles}}" 
+
+          # - name: chaos-selector-params
+          #   dependencies: [get-chaos-content]
+          #   template: chaos-selector-params
+          #   arguments:
+          #     parameters: 
+          #     - name: chaos-namespace
+          #       value: "{{workflow.parameters.chaos-namespace}}"
+          #     - name: chaos-applabel
+          #       value: "{{workflow.parameters.chaos-applabel}}"
+          #     - name: netlossfile
+          #       value: "/tmp/perf-test/http-delays.json"
+
+          # - name: RDSChaos
+          #   dependencies: [get-chaos-content]
+          #   template: delete-index-step
+
+          # - name: RDSChaosWait
+          #   dependencies: [RDSChaos]
+          #   template: wait-step
+
+          # - name: RDSChaosRestore 
+          #   dependencies: [RDSChaosWait]
+          #   template: restore-index-step
+            
+          # - name: submit-chaos-content
+          #   dependencies: [chaos-selector-params]
+          #   template: submit-chaos-content
+          #   arguments:
+          #     parameters:
+          #     - name: netlossfile
+          #       value: "{{tasks.chaos-selector-params.outputs.parameters.updated-netlossfile}}"
+          
+          - name: Last
+            dependencies: [create-locust-master, SubmitAndSuspendChaosFiles]
+            template: echo
+            arguments:
+              parameters: [{name: message, value: "Last!"}]
+  - name: chaos-get-repo
+    inputs:
+      artifacts:
+      - name: repo
+        path: /src/
+        mode: 0777
+        git:
+          repo: '{{workflow.parameters.chaos-git-repo}}'
+          depth: 1
+          singleBranch: true
+          branch: '{{workflow.parameters.chaos-git-branch}}'
+          usernameSecret:
+            name: github-creds
+            key: username
+          passwordSecret:
+            name: github-creds
+            key: password
+    container:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/alpine:3.16
+      command: [sh, -c]
+      args: ["
+        mkdir -p tmp/perf-test/chaos/; cp -r /src{{workflow.parameters.chaos-file-path}} /tmp/perf-test/chaos
+        "]
+      volumeMounts:
+      - name: workdir
+        mountPath: /tmp/perf-test/ 
+   
+
+  - name: get-chaos-files
+    script:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/python:3.9.16-slim
+      command: [python]
+      source: |
+        import os
+        import json
+        names = []
+        if os.path.exists("tmp/perf-test/chaos"):
+          for file_name in os.listdir("/tmp/perf-test/chaos/json"):
+            print(file_name)
+            names.append(file_name)
+          with open('/tmp/perf-test/chaos/json/chaos-files.json', 'w') as f:
+            json.dump(names, f)
+            print("Chaos files JSON created.")
+        else:
+          print("chaos never made")
+
+      volumeMounts:
+      - name: workdir
+        mountPath: /tmp/perf-test/
+    outputs:
+      parameters:
+      - name: test-chaosfiles
+        valueFrom:
+          path: /tmp/perf-test/chaos/json/chaos-files.json
+
+
+
+  - name: submit-and-suspend
+    inputs:
+      parameters:
+      - name: chaosfile
+    steps:
+    - - name: CheckSteadyState
+        template: suspend-template
+    - - name: SubmitChaosContent
+        template: submit-chaos-content
+        arguments:
+          parameters:
+          - name: chaosfile
+            value: "{{inputs.parameters.chaosfile}}"
+    
+          
+  - name: submit-chaos-content
+    inputs:
+      parameters:
+      - name: chaosfile
+    script:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/alpine:3.16
+      command: [sh, -c]
+      args: ['apk add --no-cache curl; curl -X POST -H "Content-Type: application/json" -H "accept: application/json" -d @/tmp/perf-test/chaos/json/{{inputs.parameters.chaosfile}} https://chaosmesh.usdev03.us-east-1.dev.digitalecp.mcd.com/api/experiments']
+      volumeMounts:
+      - name: workdir
+        mountPath: /tmp/perf-test/
+
+  - name: suspend-template
+    suspend: {}
+
+  - name: chaos-selector-params
+    inputs:
+      parameters:
+      - name: chaos-namespace
+      - name: chaos-applabel
+      - name: netlossfile
+    script:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/python:3.9.16-slim
+      imagePullPolicy: Always
+      command: [python]
+      volumeMounts:
+      - name: workdir
+        mountPath: /tmp/perf-test/
+      source: |
+        import json
+
+        def parameterize_chaos_mesh_json(file_path, parameters):
+            with open(file_path, 'r') as stream:
+                chaos_mesh_json = json.load(stream)
+            
+            # Replace selectors with the provided parameters
+            if 'spec' in chaos_mesh_json:
+                if 'selector' in chaos_mesh_json['spec']:
+                    for key, value in parameters.items():
+                        chaos_mesh_json['spec']['selector'][key] = value
+
+            # Convert the updated JSON back to JSON
+            chaos_mesh_updated_json = json.dumps(chaos_mesh_json)
+            return chaos_mesh_updated_json
+
+        json_file = '{{inputs.parameters.netlossfile}}'
+        parameters = {
+            'namespaces': ['{{inputs.parameters.chaos-namespace}}'],
+            'labelSelectors': {'app': '{{inputs.parameters.chaos-applabel}}'}
+        }
+        result = parameterize_chaos_mesh_json(json_file, parameters)
+        with open('/tmp/perf-test/updated-netloss.json', 'w') as f:
+            f.write(result)
+    outputs:
+      parameters:
+      - name: updated-netlossfile
+        value: "/tmp/perf-test/updated-netloss.json"
+
+  - name: delete-index-step
+    container:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/postgres-nash:latest
+      command: ["psql"]
+      args:
+      - -c
+      - "DROP INDEX IF EXISTS profile_first_name;"
+      - -h
+      - "backstage.c2mrggc4ohcp.us-east-1.rds.amazonaws.com"
+      - -U
+      - "backend-user"
+      - -d
+      - "postgres"
+      env:
+      - name: PGPASSWORD
+        value: "m74Y356Zot"
+      - name: PGHOST
+        value: "backstage.c2mrggc4ohcp.us-east-1.rds.amazonaws.com"
+      - name: PGUSER
+        value: "backend-user"
+      - name: PGDATABASE
+        value: "postgres"
+
+  - name: wait-step
+    container:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/alpine:3.16
+      command: ["sleep"]
+      args: ["1"]
+
+  - name: restore-index-step
+    container:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/postgres-nash:latest
+      command: ["psql"]
+      args:
+      - -c
+      - "CREATE INDEX profile_first_name ON mctitans (first_name);"
+      - -h
+      - "backstage.c2mrggc4ohcp.us-east-1.rds.amazonaws.com"
+      - -U
+      - "backend-user"
+      - -d
+      - "postgres"
+      env:
+      - name: PGPASSWORD
+        value: "m74Y356Zot"
+      - name: PGHOST
+        value: "backstage.c2mrggc4ohcp.us-east-1.rds.amazonaws.com"
+      - name: PGUSER
+        value: "backend-user"
+      - name: PGDATABASE
+        value: "postgres"
+
+  - name: get-chaos-content
+    inputs:
+      parameters:
+      - name: githubtoken
+        value: "{{workflow.outputs.parameters.githubtoken}}"
+    container:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/alpine:3.16
+      command: [sh, -c]
+      args: ['wget --header="Authorization: token {{inputs.parameters.githubtoken}}" -O /tmp/perf-test/http-delays.json "https://raw.githubusercontent.com/mcverse-org/Chaos-Mesh-Argo/russdev/Chaos%20Expirements/http-delays.json"']
+      volumeMounts:
+      - name: workdir
+        mountPath: /tmp/perf-test/
+    
+  # - name: submit-chaos-content
+  #   inputs: 
+  #     parameters:
+  #     - name: netlossfile
+  #   script:
+  #     image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/alpine:3.16
+  #     command: [sh, -c]
+  #     args: ['apk add --no-cache curl; curl -X POST -H "Content-Type: application/json" -H "accept: application/json" -d @{{inputs.parameters.netlossfile}} http://localhost:8080/api/experiments']
+  #     volumeMounts:
+  #     - name: workdir
+  #       mountPath: /tmp/perf-test/
+
+  - name: echo
+    inputs:
+          parameters:
+            - name: message
+    container:
+          image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/alpine:3.16
+          command: [echo, "{{inputs.parameters.message}}"]  
+
+  - name: get-githubcreds
+    script:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/python:3.9.16-slim
+      imagePullPolicy: Always
+      command: [python]
+      source: |
+        import jwt
+        import time 
+        import os
+        import requests
+
+        signing_key = os.environ['GITHUB_PRIVATEKEY']
+
+        payload = {
+            # Issued at time
+            'iat': int(time.time()),
+            # JWT expiration time (10 minutes maximum)
+            'exp': int(time.time()) + 600, 
+            # GitHub App's identifier
+            'iss': '280078' 
+        }
+            
+        # Create JWT
+        encoded_jwt = jwt.encode(payload, signing_key, algorithm='RS256')
+
+        url = 'https://api.github.com/app/installations/33005047/access_tokens'
+        headers = {
+                'Authorization': 'Bearer ' + encoded_jwt,
+                'Accept': 'application/vnd.github+json',
+                'Content-type': 'application/json',
+                'User-Agent': 'Argo-WF'
+            }
+        resp = requests.post(url=url, headers=headers)
+        data = resp.json()
+        with open("token.txt", "a") as f:
+          print(data['token'], file=f)
+      env:
+      - name: GITHUB_PRIVATEKEY
+        valueFrom:
+          secretKeyRef:
+            name: github-privatekey
+            key: privatekey               
+      volumeMounts:
+      - name: github-privatekey-vol
+        mountPath: /secret/mountpath
+    outputs:
+      parameters:
+      - name: githubtoken
+        valueFrom:
+          path: /token.txt
+        globalName: githubtoken
+
+  - name: update-github-secret  
+    resource:
+      action: apply
+      manifest: |
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: github-creds
+        type: Opaque
+        stringData:
+          password: '{{workflow.outputs.parameters.githubtoken}}'
+          username: 'x-access-token'
+
+  - name: create-keptn-service
+    http:
+      successCondition: "response.statusCode == 409 || response.statusCode == 200"
+      url: "http://{{workflow.parameters.keptn-api-uri}}/api/controlPlane/v1/project/{{workflow.parameters.team-name}}/service"
+      method: "POST"
+      headers:
+          - name: "x-token"
+            value: "{{workflow.parameters.keptn-api-token}}"
+          - name: "accept"
+            value: "application/json"
+          - name: "Content-Type"
+            value: "application/json"
+      body: '{"serviceName": "{{workflow.parameters.test-name}}"}'
+
+  - name: configure-keptn-service-monitoring
+    http:
+      successCondition: "response.statusCode == 200"
+      url: "http://{{workflow.parameters.keptn-api-uri}}/api/v1/event"
+      method: "POST"
+      headers:
+          - name: "x-token"
+            value: "{{workflow.parameters.keptn-api-token}}"
+          - name: "accept"
+            value: "application/json"
+          - name: "Content-Type"
+            value: "application/json"
+      body: '{
+            "data":
+                {
+                "project": "{{workflow.parameters.team-name}}",
+                "service": "{{workflow.parameters.test-name}}",
+                "stage": "{{workflow.parameters.keptn-stage-name}}",
+                "type": "prometheus"
+                },
+            "datacontenttype": "application/json",
+            "source": "argo-workflow",
+            "specversion": "1.0",
+            "type": "sh.keptn.event.monitoring.configure"
+            }'
+
+  - name: get-datafiles
+    inputs:
+      parameters:
+        - name: file-path
+        - name: file-name
+      artifacts:
+      - name: datafile
+        path: /data/{{inputs.parameters.file-name}}
+        mode: 0777
+        http:
+          url: "{{inputs.parameters.file-path}}"
+          headers:
+            - name: Authorization
+              value: "Bearer {{workflow.outputs.parameters.githubtoken}}"
+    container:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/alpine:3.16
+      command: [sh, -c]
+      args: ["
+        cp /data/{{inputs.parameters.file-name}} /tmp/perf-test/{{inputs.parameters.file-name}}
+      "]
+      volumeMounts:
+      - name: workdir
+        mountPath: /tmp/perf-test/
+
+  - name: get-libfile
+    inputs:
+      artifacts:
+      - name: libfile
+        path: /data/prommodule.py
+        mode: 0777
+        http:
+          url: "{{workflow.parameters.test-libfile}}" 
+          headers:
+            - name: Authorization
+              value: "Bearer {{workflow.outputs.parameters.githubtoken}}"
+    container:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/alpine:3.16
+      command: [sh, -c]
+      args: ["
+        cp /data/prommodule.py /tmp/perf-test/prommodule.py
+      "]
+      volumeMounts:
+      - name: workdir
+        mountPath: /tmp/perf-test/
+
+  - name: get-loadshape
+    steps:
+      - - name: GetLoadShapeFile
+          template: get-loadshapefile
+          when: "\"{{workflow.parameters.test-loadshapefile}}\" != ''"
+    outputs:
+      parameters:
+      - name: loadshape
+        valueFrom:
+          expression: "\"{{workflow.parameters.test-loadshapefile}}\" == '' ? '' : ',/tmp/perf-test/loadshape.py'"
+      - name: test-vus
+        valueFrom:
+          expression: "\"{{workflow.parameters.test-loadshapefile}}\" == '' ? '{{workflow.parameters.test-vus}}' : '0'"
+      - name: test-spawnrate
+        valueFrom:
+          expression: "\"{{workflow.parameters.test-loadshapefile}}\" == '' ? '{{workflow.parameters.test-spawnrate}}' : '0'"
+      - name: test-runtime
+        valueFrom:
+          expression: "\"{{workflow.parameters.test-loadshapefile}}\" == '' ? '{{workflow.parameters.test-runtime}}' : '0'"      
+
+  - name: get-repo
+    inputs:
+      artifacts:
+      - name: repo
+        path: /src/
+        mode: 0777
+        git:
+          repo: '{{workflow.parameters.git-repo}}'
+          depth: 1
+          singleBranch: true
+          branch: '{{workflow.parameters.git-branch}}'
+          usernameSecret:
+            name: github-creds
+            key: username
+          passwordSecret:
+            name: github-creds
+            key: password
+    container:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/alpine:3.16
+      command: [sh, -c]
+      args: ["
+        cp -r /src/. /tmp/perf-test/
+      "]
+      volumeMounts:
+      - name: workdir
+        mountPath: /tmp/perf-test/ 
+
+  - name: debug
+    container:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/locust:2.13.0
+      command: [ "tail", "-f", "/dev/null" ]
+      volumeMounts:
+      - name: workdir
+        mountPath: /tmp/perf-test/
+
+  - name: get-loadshapefile
+    inputs:
+      artifacts:
+      - name: loadshapefile
+        path: /data/loadshape.py
+        mode: 0777
+        http:
+          url: "{{workflow.parameters.test-loadshapefile}}" 
+          headers:
+            - name: Authorization
+              value: "Bearer {{workflow.outputs.parameters.githubtoken}}"
+    container:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/alpine:3.16
+      command: [sh, -c]
+      args: ["
+        cp /data/loadshape.py /tmp/perf-test/loadshape.py
+      "]
+      volumeMounts:
+      - name: workdir
+        mountPath: /tmp/perf-test/   
+
+  - name: get-testfile
+    inputs:
+      artifacts:
+      - name: testfile
+        path: /data/test.py
+        mode: 0777
+        http:
+          url: "{{workflow.parameters.test-testfile}}" 
+          headers:
+            - name: Authorization
+              value: "Bearer {{workflow.outputs.parameters.githubtoken}}"
+    container:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/alpine:3.16
+      command: [sh, -c]
+      args: ["
+        cp /data/test.py /tmp/perf-test/test.py
+      "]
+      volumeMounts:
+      - name: workdir
+        mountPath: /tmp/perf-test/
+
+  - name: create-locust-service
+    resource:
+      action: create
+      setOwnerReference: true
+      failureCondition: status.failed > 0
+      manifest: |
+        kind: Service
+        apiVersion: v1
+        metadata:
+          name: locust-master-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}
+          labels:
+            app: locust-master
+        spec:
+          ports:
+            - port: 5557
+              targetPort: loc-master-p1
+              protocol: TCP
+              name: loc-master-p1
+            - port: 5558
+              targetPort: loc-master-p2
+              protocol: TCP
+              name: loc-master-p2
+            - port: 8089
+              targetPort: loc-master-web
+              protocol: TCP
+              name: loc-master-web
+          selector:
+            app: locust-master-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}
+
+  - name: create-istio-gateway
+    resource:
+      action: create
+      setOwnerReference: true
+      failureCondition: status.failed > 0
+      manifest: |
+        apiVersion: networking.istio.io/v1alpha3
+        kind: Gateway
+        metadata:
+          name: locust-gateway-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}
+        spec:
+          selector:
+            istio: ingressgateway
+          servers:
+          - port:
+              number: 80
+              name: http
+              protocol: HTTP
+            hosts:
+            - "locust-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}.usdev01.us-east-1.dev.digitalecp.mcd.com"
+    outputs:
+        parameters:
+        - name: locust-uri
+          value: 'http://locust-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}.usdev01.us-east-1.dev.digitalecp.mcd.com'
+
+  - name: create-istio-virtualservice
+    resource:
+      action: create
+      setOwnerReference: true
+      failureCondition: status.failed > 0
+      manifest: |
+        apiVersion: networking.istio.io/v1alpha3
+        kind: VirtualService
+        metadata:
+          name: locust-virtualservice-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}
+        spec:
+          gateways:
+            - locust-gateway-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}
+          hosts:
+            - locust-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}.usdev01.us-east-1.dev.digitalecp.mcd.com
+          http:
+            - match:
+                - uri:
+                    prefix: /
+              route:
+                - destination:
+                    host: locust-master-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}
+                    port:
+                      number: 8089
+    outputs:
+        parameters:
+        - name: locust-uri
+          value: 'http://locust-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}.usdev01.us-east-1.dev.digitalecp.mcd.com'
+
+  - name: create-locust-ingress
+    resource:
+      action: create
+      setOwnerReference: true
+      failureCondition: status.failed > 0
+      manifest: |
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          annotations:
+            kubernetes.io/ingress.class: istio
+          name: locust-ingress-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}
+        spec:
+          rules:
+          - host: locust-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}.usdev01.us-east-1.dev.digitalecp.mcd.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: locust-master-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}
+                    port:
+                      number: 8089
+    outputs:
+        parameters:
+        - name: locust-uri
+          value: 'http://locust-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}.usdev01.us-east-1.dev.digitalecp.mcd.com'
+
+  - name: create-locust-master
+    inputs:
+      parameters:
+        - name: loadshape
+        - name: test-vus
+        - name: test-spawnrate
+        - name: test-runtime  
+    resource:
+      action: create
+      setOwnerReference: true
+      successCondition: status.succeeded > 0
+      failureCondition: status.failed > 0
+      manifest: |
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: {{workflow.name}}-locust-master
+        spec:
+          ttlSecondsAfterFinished: 60
+          backoffLimit: 0
+          template:
+            metadata:
+              labels:
+                app: locust-master-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}
+            spec:                                       
+              securityContext:
+                runAsUser: 1000
+                fsGroup: 2000
+              restartPolicy: Never
+              containers:
+                - name: locust-master
+                  image: {{workflow.parameters.locust-image}}
+                  workingDir: /tmp/perf-test/
+                  volumeMounts:
+                  - name: {{workflow.name}}-workdir
+                    mountPath: /tmp/perf-test/
+                  command: [locust]
+                  args: ["-f", "/tmp/perf-test{{workflow.parameters.locust-entry}}{{inputs.parameters.loadshape}}", "--host", "{{workflow.parameters.test-api-url}}", "-u", "{{inputs.parameters.test-vus}}", "-r", "{{inputs.parameters.test-spawnrate}}", "--run-time", "{{inputs.parameters.test-runtime}}", "--autostart", "--autoquit", "60", "--expect-workers", "{{workflow.parameters.test-workers}}", "--master", "--only-summary", "--html", "/tmp/perf-test/testreport.html"]
+                  env:
+                    - name: LOCUST_MODE
+                      value: master
+                    - name: PROM_PUSHGATEWAY
+                      value: {{workflow.parameters.prometheus-pushgateway-uri}}
+                    - name: PROM_JOBNAME
+                      value: {{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}-{{workflow.parameters.keptn-stage-name}}
+                    - name: ENV_NAME
+                      value: {{workflow.parameters.env-name}}
+                    - name: MARKET_NAME
+                      value: {{workflow.parameters.market-name}}
+                  ports:
+                    - name: loc-master-web
+                      containerPort: 8089
+                      protocol: TCP
+                    - name: loc-master-p1
+                      containerPort: 5557
+                      protocol: TCP
+                    - name: loc-master-p2
+                      containerPort: 5558
+                      protocol: TCP
+              volumes:
+               - name: {{workflow.name}}-workdir
+                 persistentVolumeClaim: 
+                    claimName: {{workflow.name}}-workdir
+
+  - name: create-locust-workers
+    resource:
+      action: create
+      setOwnerReference: true
+      failureCondition: status.failed > 0
+      manifest: |
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: {{workflow.name}}-locust-worker
+        spec:
+          ttlSecondsAfterFinished: 45
+          parallelism: {{workflow.parameters.test-workers}}
+          backoffLimit: 0
+          template:
+            metadata:
+              labels:
+                app: locust-worker
+            spec:              
+              securityContext:
+                runAsUser: 1000
+                fsGroup: 2000            
+              restartPolicy: Never
+              containers:
+                - name: locust-woker
+                  image: {{workflow.parameters.locust-image}}
+                  workingDir: /tmp/perf-test/
+                  volumeMounts:
+                  - name: {{workflow.name}}-workdir
+                    mountPath: /tmp/perf-test/
+                  command: [locust]
+                  args: ["-f", "/tmp/perf-test{{workflow.parameters.locust-entry}}", "--worker", "--master-host", "locust-master-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}", "--host", "{{workflow.parameters.test-api-url}}"]
+                  env:
+                    - name: LOCUST_MODE
+                      value: worker
+                    - name: ENV_NAME
+                      value: {{workflow.parameters.env-name}}
+                    - name: MARKET_NAME
+                      value: {{workflow.parameters.market-name}}                      
+              volumes:
+               - name: {{workflow.name}}-workdir
+                 persistentVolumeClaim: 
+                    claimName: {{workflow.name}}-workdir
+          
+  - name: get-slo-content
+    inputs:
+      artifacts:
+      - name: slofile
+        path: /data/slo.yaml
+        mode: 0777
+        http:
+          url: "{{workflow.parameters.test-slofile}}" 
+          headers:
+            - name: Authorization
+              value: "Bearer {{workflow.outputs.parameters.githubtoken}}"
+    container:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/alpine:3.16
+      command: [sh, -c]
+      args: ['echo "$(cat /data/slo.yaml)" | base64 -w 0 > data/sloenc.txt']
+    outputs:
+      parameters:
+      - name: slo-base64
+        valueFrom:
+          path: data/sloenc.txt
+          
+  - name: get-sli-content
+    inputs:
+      artifacts:
+      - name: slifile
+        path: /data/sli.yaml
+        mode: 0777
+        http:
+          url: "{{workflow.parameters.test-slifile}}"  
+          headers:
+            - name: Authorization
+              value: "Bearer {{workflow.outputs.parameters.githubtoken}}"
+    container:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/alpine:3.16
+      command: [sh, -c]
+      args: ['echo "$(cat /data/sli.yaml)" | base64 -w 0 > data/slienc.txt']
+    outputs:
+      parameters:
+      - name: sli-base64
+        valueFrom:
+          path: data/slienc.txt
+      
+  - name: upload-slo-to-keptn
+    inputs:
+      parameters:
+      - name: slo-base64 
+    http:
+      url: "http://{{workflow.parameters.keptn-api-uri}}/api/resource-service/v1/project/{{workflow.parameters.team-name}}/stage/{{workflow.parameters.keptn-stage-name}}/service/{{workflow.parameters.test-name}}/resource"
+      method: "POST"
+      headers:
+          - name: "x-token"
+            value: "{{workflow.parameters.keptn-api-token}}"
+          - name: "accept"
+            value: "application/json"
+          - name: "Content-Type"
+            value: "application/json"
+      body: '{
+            "resources": [
+            {
+              "resourceContent": "{{inputs.parameters.slo-base64}}",
+              "resourceURI": "slo.yaml"
+            }
+              ]
+            }'
+            
+  - name: upload-sli-to-keptn
+    inputs:
+      parameters:
+      - name: sli-base64 
+    http:
+      url: "http://{{workflow.parameters.keptn-api-uri}}/api/resource-service/v1/project/{{workflow.parameters.team-name}}/stage/{{workflow.parameters.keptn-stage-name}}/service/{{workflow.parameters.test-name}}/resource"
+      method: "POST"
+      headers:
+          - name: "x-token"
+            value: "{{workflow.parameters.keptn-api-token}}"
+          - name: "accept"
+            value: "application/json"
+          - name: "Content-Type"
+            value: "application/json"
+      body: '{
+            "resources": [
+            {
+              "resourceContent": "{{inputs.parameters.sli-base64}}",
+              "resourceURI": "prometheus/sli.yaml"
+            }
+              ]
+            }'
+
+  - name: send-finished-event-keptn2
+    inputs:
+      parameters:
+      - name: status
+      - name: result
+      - name: message
+      - name: start-time 
+      - name: end-time  
+    container:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/curl:3.14
+      command: [sh, -c]
+      args: [
+          "curl --location --request POST 'http://{{workflow.parameters.keptn-api-uri}}/api/v1/event' 
+            --header 'accept: application/json' 
+            --header 'x-token: {{workflow.parameters.keptn-api-token}}' 
+            --header 'Content-Type: application/cloudevents+json' 
+            --data-raw '{
+                          \"type\": \"sh.keptn.event.test.finished\",
+                          \"specversion\": \"1.0\",
+                          \"source\": \"argo-wf\",
+                          \"contenttype\": \"application/json\",
+                          \"shkeptncontext\": \"{{workflow.parameters.keptn-trigger-shkeptncontext}}\",
+                          \"triggeredid\": \"{{workflow.parameters.keptn-trigger-id}}\",
+                          \"data\":
+                          {
+                            \"project\": \"{{workflow.parameters.team-name}}\",
+                            \"service\": \"{{workflow.parameters.test-name}}\", 
+                            \"stage\": \"{{workflow.parameters.keptn-stage-name}}\",
+                            \"status\": \"{{inputs.parameters.status}}\",
+                            \"result\": \"{{inputs.parameters.result}}\",
+                            \"message\": \"{{inputs.parameters.message}}\",
+                            \"test\": {
+                              \"start\": \"{{inputs.parameters.start-time}}\",
+                              \"end\": \"{{inputs.parameters.end-time}}\"
+                            },          
+                            \"labels\": {
+                              \"workflowname\": \"{{workflow.name}}\"
+                            }
+                          }
+                        }'"
+        ]
+
+  - name: send-started-event-keptn
+    inputs:
+      parameters:
+      - name: testurl
+    http:
+      url: "http://{{workflow.parameters.keptn-api-uri}}/api/v1/event/"
+      method: "POST"
+      headers:
+          - name: "x-token"
+            value: "{{workflow.parameters.keptn-api-token}}"
+          - name: "Accept"
+            value: "application/json"
+          - name: "Content-Type"
+            value: "application/cloudevents+json"
+      body: '{
+              "type": "sh.keptn.event.test.started",
+              "specversion": "1.0",
+              "source": "argo-wf",
+              "contenttype": "application/json",
+              "shkeptncontext": "{{workflow.parameters.keptn-trigger-shkeptncontext}}",
+              "triggeredid" : "{{workflow.parameters.keptn-trigger-id}}",
+              "data":
+              {
+                "project": "{{workflow.parameters.team-name}}",
+                "service": "{{workflow.parameters.test-name}}", 
+                "stage": "{{workflow.parameters.keptn-stage-name}}",
+                "message": "workflowname={{workflow.name}}\r\ntesturl={{inputs.parameters.testurl}}",
+                "labels": {
+                  "workflowname": "{{workflow.name}}",
+                  "testurl": "{{inputs.parameters.testurl}}"
+                }
+              }
+            }'
+
+  - name: send-finished-event-keptn
+    inputs:
+      parameters:
+      - name: status
+      - name: result
+      - name: message
+      - name: start-time 
+      - name: end-time  
+    http:
+      url: "http://{{workflow.parameters.keptn-api-uri}}/api/v1/event/"
+      method: "POST"
+      headers:
+          - name: "x-token"
+            value: "{{workflow.parameters.keptn-api-token}}"
+          - name: "Accept"
+            value: "application/json"
+          - name: "Content-Type"
+            value: "application/cloudevents+json"
+      body: '{
+              "type": "sh.keptn.event.test.finished",
+              "specversion": "1.0",
+              "source": "argo-wf",
+              "datacontenttype": "application/json",
+              "shkeptncontext": "{{workflow.parameters.keptn-trigger-shkeptncontext}}",
+              "triggeredid" : "{{workflow.parameters.keptn-trigger-id}}",
+              "data":
+              {
+                "project": "{{workflow.parameters.team-name}}",
+                "service": "{{workflow.parameters.test-name}}", 
+                "stage": "{{workflow.parameters.keptn-stage-name}}",
+                "status": "{{inputs.parameters.status}}",
+                "result": "{{inputs.parameters.result}}",
+                "message": "{{inputs.parameters.message}}",
+                "test": {
+                  "start": "{{inputs.parameters.start-time}}",
+                  "end": "{{inputs.parameters.end-time}}"
+                },
+                "evaluation": {
+                  "start": "{{inputs.parameters.start-time}}",
+                  "end": "{{inputs.parameters.end-time}}"
+                },          
+                "labels": {
+                  "workflowname": "{{workflow.name}}"
+                }
+              }
+            }'
+
+  - name: trigger-keptn-evaluation
+    inputs:
+      parameters:
+      - name: start-time
+      - name: end-time
+    http:
+      url: "http://{{workflow.parameters.keptn-api-uri}}/api/controlPlane/v1/project/{{workflow.parameters.team-name}}/stage/{{workflow.parameters.keptn-stage-name}}/service/{{workflow.parameters.test-name}}/evaluation"
+      method: "POST"
+      headers:
+          - name: "x-token"
+            value: "{{workflow.parameters.keptn-api-token}}"
+          - name: "accept"
+            value: "application/json"
+          - name: "Content-Type"
+            value: "application/json"
+      body: '{"labels": {"testid": "{{workflow.name}}"},"start": "{{inputs.parameters.start-time}}","end": "{{inputs.parameters.end-time}}"}'
+                      
+  - name: get-keptn-evaluation-result
+    inputs:
+      parameters:
+      - name: keptncontext
+    http:
+      url: "http://{{workflow.parameters.keptn-api-uri}}/api/mongodb-datastore/event/type/sh.keptn.event.evaluation.finished?filter=shkeptncontext:{{inputs.parameters.keptncontext}}&excludeInvalidated=false&limit=20"
+      method: "GET"
+      headers:
+          - name: "x-token"
+            value: "{{workflow.parameters.keptn-api-token}}"
+          - name: "accept"
+            value: "application/json"
+            
+  - name: extract-keptn-evaluation-result
+    inputs:
+      parameters:
+      - name: result
+    http:
+      successCondition: "'{{inputs.parameters.result}}' != 'fail'"
+      url: "http://{{workflow.parameters.keptn-api-uri}}"
+                 
+  - name: upload-report-s3
+    metadata:
+      annotations:
+        iam.amazonaws.com/role: "arn:aws:iam::607546651489:role/DevSecOpsAdminRole"
+    container:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/alpine:3.16
+      command: [sh, -c]
+      args: ["mkdir -p /tmp/perf-test/reports/; mv /tmp/perf-test/testreport.html /tmp/perf-test/reports/ "]
+      volumeMounts:
+      - name: workdir
+        mountPath: /tmp/perf-test/
+    outputs:
+      artifacts:
+      - name: perf-report-file
+        path: /tmp/perf-test/reports/testreport.html
+        archive:
+          none: {}
+        s3:
+          endpoint: s3.amazonaws.com
+          bucket: nash-usdev01-perf-testing
+          key: "Perf-Testing-Reports/{{workflow.parameters.team-name}}/{{workflow.parameters.test-name}}/{{workflow.name}}.html"
+          roleARN: "arn:aws:iam::607546651489:role/DevSecOpsAdminRole"
+          region: us-east-1
+
+  - name: upload-error-s3
+    metadata:
+      annotations:
+        iam.amazonaws.com/role: "arn:aws:iam::607546651489:role/DevSecOpsAdminRole"
+    container:
+      image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/alpine-k8s:1.25.3
+      command: [bash, -c]
+      args: ["mkdir -p /data/;
+      podnames=$(kubectl -n {{workflow.namespace}} get pods --field-selector='status.phase==Failed' -o custom-columns='POD:metadata.name' | grep {{workflow.name}} );
+      echo {{workflow.failures}} > /data/err.log;
+      echo '--------------------------------------------' >> /data/err.log;
+      echo $podnames >> /data/err.log;
+      echo '--------------------------------------------' >> /data/err.log;
+      export IFS='\n';
+      for podname in $podnames;
+      do
+        echo $podname >> /data/err.log;
+        kubectl logs $podname -n {{workflow.namespace}} >> /data/err.log;
+        echo '--------------------------------------------' >> /data/err.log;
+      done
+      "]
+    outputs:
+      artifacts:
+      - name: perf-report-error
+        path: /data/err.log
+        archive:
+          none: {}
+        s3:
+          endpoint: s3.amazonaws.com
+          bucket: nash-usdev01-perf-testing
+          key: "Perf-Testing-Reports/{{workflow.parameters.team-name}}/{{workflow.parameters.test-name}}/{{workflow.name}}-error.log"
+          roleARN: "arn:aws:iam::607546651489:role/DevSecOpsAdminRole"
+          region: us-east-1
+
+  - name: delete-object
+    inputs:
+      parameters:
+      - name: object-name
+      - name: object-type
+      - name: api-version   
+    resource:
+      action: delete
+      manifest: |
+        apiVersion: {{inputs.parameters.api-version}}
+        kind: {{inputs.parameters.object-type}}
+        metadata:
+          name: {{inputs.parameters.object-name}}
+
+  - name: exit-handler
+    steps:
+      - - name: UploadErrorS3
+          template: upload-error-s3
+          when: "{{workflow.status}} != Succeeded"
+      - - name: DeleteLocustServiceExit
+          template: delete-object
+          when: "{{workflow.status}} != Succeeded"
+          arguments:
+            parameters:
+            - name: object-name
+              value: 'locust-master-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}'
+            - name: object-type
+              value: 'Service'
+            - name: api-version
+              value: 'v1'
+      - - name: DeleteIstioGatewayExit
+          template: delete-object
+          when: "{{workflow.status}} != Succeeded"
+          arguments:
+            parameters:
+            - name: object-name
+              value: 'locust-gateway-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}'
+            - name: object-type
+              value: 'gateway'
+            - name: api-version
+              value: 'networking.istio.io/v1alpha3'
+      - - name: DeleteIstioVirtualServiceExit
+          template: delete-object
+          when: "{{workflow.status}} != Succeeded"
+          arguments:
+            parameters:
+            - name: object-name
+              value: 'locust-virtualservice-{{workflow.parameters.test-name}}-{{workflow.parameters.team-name}}'
+            - name: object-type
+              value: 'virtualservice'
+            - name: api-version
+              value: 'networking.istio.io/v1alpha3'
+      - - name: SendFinishedEventToKeptnExit
+          template: send-finished-event-keptn2
+          when: "{{workflow.status}} != Succeeded && {{workflow.parameters.keptn-triggered}} == true"
+          arguments:
+            parameters:
+            - name: status
+              value: 'errored'
+            - name: result
+              value: 'fail'
+            - name: message
+              value: 'there was an error in the test workflow'              
+            - name: start-time
+              value: '1/1/2022 00:00:00' 
+            - name: end-time
+              value: '1/1/2022 00:00:00'              

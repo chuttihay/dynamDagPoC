@@ -1,0 +1,111 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: dynamic-parallel-dag-
+spec:
+  entrypoint: generate-tasks
+  templates:
+    - name: generate-tasks
+      dag:
+        tasks:
+          - name: clone-repo
+            template: clone-repo
+            arguments:
+              parameters:
+                - name: repo-url
+                  value: "https://github.com/your-username/your-repo.git"
+          - name: list-files
+            template: list-files
+            dependencies: [clone-repo]
+          - name: process-file
+            template: process-file
+            withParam: "{{tasks.list-files.outputs.parameters.files}}"
+            dependencies: [list-files]
+  # Define a template to clone the GitHub repository
+  - name: clone-repo
+    container:
+      image: 'alpine/git:latest'
+      command: ["git", "clone", "{{inputs.parameters.repo-url}}", "/tmp/repo"]
+  # Define a template to list the files in the cloned repository
+  - name: list-files
+    inputs:
+      artifacts:
+        - name: cloned-repo
+          path: /tmp/repo
+    outputs:
+      parameters:
+        - name: files
+          valueFrom:
+            path: /tmp/files-list.txt
+    container:
+      image: 'alpine:3.13'
+      command: ["sh", "-c"]
+      args: ["ls /tmp/repo > /tmp/files-list.txt"]
+  # Define a template to process each file
+  - name: process-file
+    inputs:
+      parameters:
+        - name: file
+    container:
+      image: 'your-container-image:latest'
+      command: ["your-command-to-process-file", "/tmp/repo/{{inputs.parameters.file}}"]
+
+
+
+  # - name: get-repo
+  #   inputs:
+  #     artifacts:
+  #     - name: repo
+  #       path: /src/
+  #       mode: 0777
+  #       git:
+  #         repo: '{{workflow.parameters.git-repo}}'
+  #         depth: 1
+  #         singleBranch: true
+  #         branch: '{{workflow.parameters.git-branch}}'
+  #         usernameSecret:
+  #           name: github-creds
+  #           key: username
+  #         passwordSecret:
+  #           name: github-creds
+  #           key: password
+  #   container:
+  #     image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/alpine:3.16
+  #     command: [sh, -c]
+  #     args: ["
+  #       mkdir -p tmp/perf-test/chaos/; cp -r /src{{workflow.parameters.chaos-file-path}} /tmp/perf-test/chaos
+  #       "]
+  #     volumeMounts:
+  #     - name: workdir
+  #       mountPath: /tmp/perf-test/ 
+
+
+
+  # - name: get-files
+  #   script:
+  #     image: vet-docker.artifactory.sharedtools.vet-tools.digitalecp.mcd.com/python:3.9.16-slim
+  #     command: [python]
+  #     source: |
+  #       import os
+  #       import json
+  #       names = []
+  #       if os.path.exists("tmp/perf-test/chaos"):
+  #         for file_name in os.listdir("/tmp/perf-test/chaos/json"):
+  #           print(file_name)
+  #           names.append(file_name)
+  #         with open('/tmp/perf-test/chaos/json/chaos-files.json', 'w') as f:
+  #           json.dump(names, f)
+  #           print("Chaos files JSON created.")
+  #       else:
+  #         print("chaos never made")
+
+  #     volumeMounts:
+  #     - name: workdir
+  #       mountPath: /tmp/perf-test/
+  #   outputs:
+  #     parameters:
+  #     - name: test-chaosfiles
+  #       valueFrom:
+  #         path: /tmp/perf-test/chaos/json/chaos-files.json
+
+
